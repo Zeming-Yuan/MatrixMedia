@@ -35,6 +35,7 @@ import { resolveAccountPublishMode } from "../services/accountPublishSettingsRes
 import { resolveTaskPartition } from "../services/accountLookup.js";
 import { ensureAccountRecordsMigrated } from "../services/accountMigration.js";
 import { normalizeVideoMetadata } from "../../shared/videoMetadata.js";
+import { resolvePublishCompletion, resolvePublishProgress } from "../../shared/publishResult.js";
 
 export {
   isCliMode,
@@ -384,6 +385,8 @@ async function runBatchDirPublish(v, cfg) {
 
     const selectedFile = path.basename(resolvedFile);
     const recordItem = {
+      taskId,
+      publishSettled: false,
       bookName,
       textOtherName: stem,
       textType: "local",
@@ -445,23 +448,26 @@ async function runBatchDirPublish(v, cfg) {
       );
     }
 
-    const updateRecord = (status, message) => {
+    const updateRecord = (status, message, isFinal = true) => {
       if (!recordId) return;
       try {
-        changeData({
+        const updated = changeData({
           fileName: "pushData",
           type: "update",
+          expectedTaskId: taskId,
           item: {
             id: recordId,
             date: recordDate,
             publishStatus: status,
-            publishSuccessCount: status === "success" ? 1 : 0,
+            publishSettled: isFinal,
+            publishSuccessCount: ["success", "draft"].includes(status) ? 1 : 0,
             publishFailCount: status === "failed" ? 1 : 0,
             publishAbnormalCount: status === "abnormal" ? 1 : 0,
             lastPublishMessage: message || "",
             lastPublishAt: Date.now(),
           },
         });
+        if (!updated.success) console.warn("[publish] 回执未写入当前任务:", updated.code || updated.message);
       } catch (e) {
         console.error(
           "MatrixMedia: 更新 pushData 记录失败 [" + row.fileName + "]:",
@@ -485,11 +491,13 @@ async function runBatchDirPublish(v, cfg) {
 
     const taskResult = await new Promise((resolve) => {
       let settled = false;
-      const finish = (ok, message) => {
+      const finish = (ok, message, completion = null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ ok, message });
+        resolve({ ok, message, ...(completion ? {
+          status: completion.status, needsAttention: completion.exitCode === 4,
+        } : {}) });
       };
 
       const timer = setTimeout(() => {
@@ -502,7 +510,13 @@ async function runBatchDirPublish(v, cfg) {
 
       const transport = {
         reply(channel, payload) {
-          if (channel === "puppeteerFile-done") {
+          if (settled) return;
+          if (channel === "puppeteerFile-progress") {
+            if (!payload || payload.taskId !== taskId) return;
+            const progress = resolvePublishProgress(payload);
+            if (!progress) return;
+            updateRecord(progress.recordStatus, progress.message, false);
+          } else if (channel === "puppeteerFile-done") {
             if (payload && payload.taskId != null && payload.taskId !== taskId)
               return;
             if (payload && payload.skipped) {
@@ -511,15 +525,9 @@ async function runBatchDirPublish(v, cfg) {
               finish(true, msg);
               return;
             }
-            const ok = payload && payload.status === true;
-            const abnormal = ok && payload.publishAbnormal === true;
-            const msg =
-              (payload && payload.message) || (ok ? "上传成功" : "上传失败");
-            updateRecord(
-              abnormal ? "abnormal" : ok ? "success" : "failed",
-              msg
-            );
-            finish(ok && !abnormal, msg);
+            const completion = resolvePublishCompletion(payload);
+            updateRecord(completion.recordStatus, completion.message);
+            finish(completion.exitCode === 0, completion.message, completion);
           } else if (channel === "puppeteer-noLogin") {
             if (payload && payload.taskId != null && payload.taskId !== taskId)
               return;
@@ -544,7 +552,8 @@ async function runBatchDirPublish(v, cfg) {
       title: bt1,
       platform: v.platform,
       phone: v.phone || "",
-      status: taskResult.ok ? "success" : "failed",
+      status: taskResult.status || (taskResult.ok ? "success" : "failed"),
+      ...(taskResult.needsAttention ? { needsAttention: true } : {}),
       message: taskResult.message,
     };
     results.push(r);
@@ -552,7 +561,8 @@ async function runBatchDirPublish(v, cfg) {
   }
 
   // Summary
-  const succeeded = results.filter((r) => r.status === "success").length;
+  const succeeded = results.filter((r) => ["success", "draft"].includes(r.status)).length;
+  const needsAttention = results.filter((r) => r.needsAttention).length;
   const failed = results.filter(
     (r) => r.status === "failed" || r.status === "skipped"
   ).length;
@@ -562,11 +572,13 @@ async function runBatchDirPublish(v, cfg) {
       total: rows.length,
       succeeded,
       failed,
+      needsAttention,
       message: "成功 " + succeeded + " / 失败 " + failed,
       results,
     })
   );
 
+  if (needsAttention > 0) return 4;
   if (failed === 0) return 0;
   if (succeeded === 0) return 2;
   return 1;

@@ -109,6 +109,7 @@
 | `fileName` | 数据文件夹名，如 `account`、`pushData`；只允许字母 / 数字 / 下划线 / 短横线（1-64 位），含路径分隔符或 `.` / `..` 一律返回 `success:false` |
 | `type`     | 操作类型：`add` / `update` / `delete` / `get` / `config` |
 | `item`     | 具体数据项，结构随 `fileName` 与 `type` 变化；`item.date` 必须是 `YYYY-MM-DD` |
+| `expectedTaskId` | 可选，仅 `pushData` 的 `update` 支持；必须匹配记录当前 `taskId` 且该任务未 `publishSettled`，否则返回 `success:false, code:stale_publish_task`，不写入。用于防止迟到回执覆盖新任务或终态，不替代现有请求权限校验 |
 
 ## POST /publish
 
@@ -164,6 +165,7 @@
 - 单平台发布失败（如上传/填写失败）：HTTP `200`，但 `success: false`、`exitCode: 3`
 - 登录态失效：HTTP `200`，`success: false`、`status: login_required`、`exitCode: 5`（需重新扫码后重跑）
 - 视频号链接添加失败但草稿保存成功：HTTP `200`，`success: false`、`status: needs_attention`、`exitCode: 4`
+- 平台仍等待扫码/安全确认或发表结果尚未核验：HTTP `200`、`success: false`、`status: needs_attention`、`exitCode: 4`；`outcome: waiting_confirmation` 表示等待确认，原 `publishMode` 保持不变，不代表已保存草稿。进度只更新同一条历史记录，不触发重发。
 - 多平台：HTTP 只表示任务是否提交成功，最终结果请查询发布记录
 - 服务已配置 CORS，浏览器或本机脚本均可调用
 

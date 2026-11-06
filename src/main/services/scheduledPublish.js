@@ -10,6 +10,7 @@ import { normalizeCreativeStatement } from "../../shared/creativeStatement.js";
 import { isRemotePublishFile, resolvePublishFile } from "./resolvePublishFile";
 import { normalizeVideoRecordMetadata } from "../../shared/videoMetadata.js";
 import { scheduledKey } from "./scheduledDedupe.js";
+import { resolvePublishCompletion, resolvePublishProgress } from "../../shared/publishResult.js";
 
 const MAX_TIMER_DELAY_MS = 24 * 60 * 60 * 1000;
 const REFRESH_INTERVAL_MS = 60 * 1000;
@@ -158,14 +159,16 @@ export function buildTaskPayloadFromRecord(record) {
   };
 }
 
-function updateRecord(record, patch) {
+function updateRecord(record, patch, isFinal = true) {
   if (!record || !record.id || !record.date) return;
-  changeData({
+  return changeData({
     fileName: "pushData",
     type: "update",
+    expectedTaskId: record.taskId,
     item: {
       id: record.id,
       date: record.date,
+      publishSettled: isFinal,
       ...patch,
     },
   });
@@ -200,6 +203,7 @@ function finishScheduledRecord(record, payload) {
   if (payload && payload.skipped) {
     updateRecord(record, {
       publishStatus: "skipped",
+      publishSettled: true,
       publishSuccessCount: 0,
       publishFailCount: 0,
       lastPublishMessage:
@@ -208,19 +212,19 @@ function finishScheduledRecord(record, payload) {
     });
     return;
   }
-  const ok = payload && payload.status === true;
-  const abnormal = ok && payload.publishAbnormal === true;
+  const completion = resolvePublishCompletion(payload);
+  const succeeded = ["success", "draft"].includes(completion.recordStatus);
   // 失败/异常时主进程已在发布页截了图，落库后视频管理里可点开回看
   const failScreenshot =
     (payload && payload.failScreenshot) || record.failScreenshot;
   updateRecord(record, {
-    publishStatus: abnormal ? "abnormal" : ok ? "success" : "failed",
-    publishSuccessCount: ok && !abnormal ? 1 : 0,
-    publishFailCount: ok ? 0 : 1,
-    publishAbnormalCount: abnormal ? 1 : 0,
-    ...(ok && !abnormal ? {} : { failScreenshot }),
-    lastPublishMessage:
-      (payload && payload.message) || (ok ? "发布成功" : "发布失败"),
+    publishStatus: completion.recordStatus,
+    publishSettled: true,
+    publishSuccessCount: succeeded ? 1 : 0,
+    publishFailCount: ["failed", "login_required"].includes(completion.recordStatus) ? 1 : 0,
+    publishAbnormalCount: completion.recordStatus === "abnormal" ? 1 : 0,
+    ...(succeeded ? {} : { failScreenshot }),
+    lastPublishMessage: completion.message,
     lastPublishAt: Date.now(),
   });
 }
@@ -300,11 +304,15 @@ async function executeScheduledRecordAsync(record) {
       filePath: publishFilePath,
     });
     const taskId = taskPayload.taskId;
-    updateRecord(record, {
+    const started = updateRecord(record, {
       publishStatus: "publishing",
+      taskId,
+      publishSettled: false,
       lastPublishMessage: "定时任务开始发布",
       lastPublishAt: Date.now(),
     });
+    if (!started || !started.success) return;
+    const activeRecord = { ...record, taskId };
 
     await new Promise((resolve) => {
       let publishSettled = false;
@@ -315,15 +323,26 @@ async function executeScheduledRecordAsync(record) {
       };
       const transport = {
         reply(channel, payload) {
+          if (publishSettled) return;
           if (payload && payload.taskId != null && payload.taskId !== taskId)
             return;
-          if (channel === "puppeteerFile-done") {
-            finishScheduledRecord(record, payload);
+          if (channel === "puppeteerFile-progress") {
+            if (!payload || payload.taskId !== taskId) return;
+            const progress = resolvePublishProgress(payload);
+            if (!progress) return;
+            updateRecord(activeRecord, {
+              publishStatus: progress.recordStatus,
+              lastPublishMessage: progress.message,
+              lastPublishAt: Date.now(),
+            }, false);
+          } else if (channel === "puppeteerFile-done") {
+            finishScheduledRecord(activeRecord, payload);
             finish();
           } else if (channel === "puppeteer-noLogin") {
             // 登录失效单独标状态：任务本身没错，补扫码后可重新排期
-            updateRecord(record, {
+            updateRecord(activeRecord, {
               publishStatus: "login_required",
+              publishSettled: true,
               publishFailCount: Number(record.publishFailCount || 0) + 1,
               lastPublishMessage:
                 "登录态失效，需重新扫码登录后重排（本次未发布）",
