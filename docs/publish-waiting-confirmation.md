@@ -43,9 +43,9 @@ git diff --check
 
 上述构建和受影响测试已通过。GUI 测试前必须先完成根包构建，不能在运行时并行重建 dist。测试启动器曾有 Electron 加载/菜单定位错误，已修正后才计入有效红绿证据；不把测试环境错误计为产品红灯。
 
-## 未验证与回退
+## 早期验证限制与回退
 
-仓库要求的 `node e2e/run.js -p dy --yes` 已尝试：首次因缺少 ffmpeg 在生成视频时退出 2；补齐本地 ffmpeg 并生成合成视频后重跑，runner 退出 1，平台分类 ERROR、CLI 退出 2，诊断为缺少 `--phone` 或完整 `--partition`，`draftVerified=N/A`。真实 CLI `accounts --json` 返回空列表（0 个账号），没有可用登录态；没有实际平台上传。报告位于忽略目录 `e2e/artifacts/20261106-024001/report.md`。真实平台草稿验证尚未通过，不能将受控 GUI/CLI/MCP 测试冒充真实平台证据。真实扫码平台页面、Windows/打包安装未验证；根包类型/lint 未配置（N/A），MCP 类型检查由构建覆盖。本轮仅跑受影响检查，不宣称全仓 CI 或完整平台门禁通过。
+2026-11-06 的 Linux 验证曾因缺少 ffmpeg、账号参数和登录态而未完成真实上传：`e2e/artifacts/20261106-024001/report.md` 分类 ERROR，CLI 退出 2，`draftVerified=N/A`。这是早期受限记录；2026-11-09 已补齐 Windows 抖音显示窗口模式的真实草稿通过证据及 Windows GUI 验证，详见下节。根包未配置类型/lint（N/A），MCP 类型检查由构建覆盖；完整仓库门禁和已安装打包产物仍未验证。
 
 ## 审查修复
 
@@ -61,4 +61,53 @@ Standards 与 Spec 均发现草稿等待回执丢失原意图，以及 GUI 缺�
 
 在独立 PR 分支的固定代码提交 `301b99f` 完成上述根包受影响测试、真实 Electron GUI 测试及 `yarn build:dir`，均退出 0。MCP 源码在最终代次修复中未变，已完成构建及上述 5 项测试（0 失败、0 跳过）。依赖通过本地链接复用且仅由本地 Git exclude 忽略，不提交依赖或构建产物；此分支只包含本切片的代码、测试和文档。
 
-固定非空范围 `284e47a...301b99f` 的 Standards / Spec 独立复审均无新增可操作问题，前述发现均已修复。权限/路径范围、同素材并发任务、重复及迟到回执、错误码和存储一致性由受影响回归覆盖；不将受控平台边界替代视为真实平台验证。真实平台门禁仍未通过，PR 保持草稿，不能因构建和受控测试通过而合并。
+固定非空范围 `284e47a...301b99f` 的 Standards / Spec 独立复审均无新增可操作问题，前述发现均已修复。权限/路径范围、同素材并发任务、重复及迟到回执、错误码和存储一致性由受影响回归覆盖。当时因缺少真实平台证据保持 Draft；后续补验结果及当前范围如下。
+
+## Windows 补验（2026-11-09）
+
+环境为 Windows 10 x64（19045）、Node 20.20.2、Yarn 1.22.22、Electron 24.8.8，目录 `D:\MatrixMedia`。发布业务代码版本为 `d6681d2186f10a27de96f5de962625cfc789f040`；本次仅修改 GUI 测试启动与导航、验收文档及合成数据截图，没有修改发布器、回执或 e2e 分类逻辑。Windows 系统默认 Node 为 26，本次命令均显式使用上述 Node 20 或将其目录前置到当前会话 PATH。
+
+### GUI 启动与菜单问题
+
+原命令可复现两层环境故障：
+
+1. 测试启动器把 `ELECTRON_RUN_AS_NODE` 设为空字符串，该 Windows 环境仍以 Node 模式启动 Electron，临时 `probe.cjs` 报 `Cannot find module 'electron'`。现改为从子进程环境中删除该变量；最终通过测试时，父进程特意设置为 `1`，验证继承值也能被隔离。
+2. 去掉该变量后，路由初始化报 `TypeError: i.hasInjectionContext is not a function`。本机 `vue-demi` 错用 Vue 3 适配层（`isVue2=false`），而安装的 Vue 为 2.7.16。执行依赖自带的 `node node_modules/vue-demi/scripts/postinstall.js` 后，确认 `isVue2=true`、`hasInjectionContext` 为函数，再重新构建。没有修改依赖版本、锁文件或手工编辑 dist 文件。
+
+菜单恢复后，更新提示遮罩及其关闭动画仍会吞掉导航点击。GUI 测试现通过真实“暂不更新”按钮关闭提示，并用 `elementFromPoint` 确认菜单可接收点击后进入视频管理；没有替换路由、存储或发布状态处理。
+
+在 Node 20 / Yarn 1.22.22 下执行：
+
+```powershell
+node node_modules/vue-demi/scripts/postinstall.js
+yarn build:dir
+$env:ELECTRON_RUN_AS_NODE = '1'
+node scripts/test-publish-waiting-confirmation-gui.js
+Remove-Item Env:ELECTRON_RUN_AS_NODE
+```
+
+构建与 GUI 测试退出 0，GUI 输出 `GUI waiting_confirmation / zero success / one record: passed`。实际结果为 `{"status":"waiting_confirmation","successCount":0,"failCount":0,"records":1,"concurrentTerminalProtected":true}`。截图已实际查看，仅包含合成记录；测试结束后没有残留本仓库 Electron 进程。
+
+![Windows 合成记录的等待确认状态](./images/publish-waiting-confirmation-windows.png)
+
+另以 Node 20 重跑 11 个脚本，均退出 0：`test-publish-waiting-confirmation`、`test-publish-waiting-confirmation-cli`、`test-publish-abnormal`、`test-history-status`、`test-history-args`、`test-publish-history-csv`、`test-scheduled-dedupe`、`test-publish-draft-args`、`test-article-republish`、`test-pushdata-dedupe`、`test-change-data-path`（均位于 `scripts/`，后缀 `.js`）。本次未修改 MCP；前次 Windows MCP 构建通过，相关测试 5/5 在仅将 POSIX shebang 合成夹具改由 Node 启动的临时启动器下通过，原生夹具运行曾有 4 项失败，此限制仍保留。
+
+### 真实平台草稿证据
+
+已重新读取 Windows 本机原始报告 `D:\MatrixMedia\e2e\artifacts\20261109-075617\report.md` / `report.json`，并与既有 PR 记录核对。该轮使用本机扫码登录态与合成视频，命令为：
+
+```powershell
+node --require D:\DevTools\Apps\MatrixMediaRuntime\electron-direct-launch.cjs e2e/run.js -p dy --yes --phone <本机测试分组> --video e2e/artifacts/fixtures/windows-test-video.mp4 --skip-build --show --timeout 180
+```
+
+临时启动器只给 Electron 子进程添加 `--no-proxy-server --disable-gpu` 并移除空 `ELECTRON_RUN_AS_NODE`；系统代理配置未修改。结果为 `PASS_VERIFIED`，runner 与 CLI 退出 0，`resultStatus=draft`、`publishMode=draft`、`draftVerified=true`、`draftUrlUnchanged=false`。报告诊断行：
+
+```text
+[dy] 已点击存草稿按钮 (#popover-tip-container+button)
+[publish] 抖音 存草稿后页面地址已变化（草稿模式仅记录，不判定异常）：https://creator.douyin.com/creator-micro/content/upload?enter_from=publish
+[publish] 抖音 已确认草稿保存成功（页面已跳转：https://creator.douyin.com/creator-micro/content/upload?enter_from=publish）
+```
+
+`--yes` 未进行后台人工核对；通过依据为平台保存后的跳转与回执字段。回执 message 仍沿用“网页端无草稿箱，无法核验”的旧文案，本次没有改写。早一轮隐藏窗口 run `20261109-073818` 为 `NEEDS_ATTENTION`、CLI 退出 4、`outcome=draft_unverified`、`draftUrlUnchanged=true`，该失败记录仍保留，隐藏模式尚未确认。账号、Cookie、原始平台截图与素材均留在 Windows 本机，没有提交。
+
+Windows GUI 和显示窗口模式的真实草稿证据已补齐，可将 PR 转为可审查状态。审查范围仍需保留隐藏模式、已安装打包产物和完整仓库门禁的上述限制。真实平台测试产生的 `MM-E2E` 草稿请在核对后清理。

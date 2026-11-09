@@ -30,10 +30,13 @@ require(${JSON.stringify(path.join(root, "dist/electron/main.js"))});
 `);
 
 async function main() {
+  // Windows 上空值也可能开启 Node 模式，必须彻底移除继承的变量。
+  const childEnv = { ...process.env, HOME: temp, XDG_CONFIG_HOME: path.join(temp, ".config"),
+    MATRIXMEDIA_DISABLE_TELEMETRY: "1" };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
   const child = spawn(require("electron"), [wrapper, "--disable-gpu"], {
     cwd: root,
-    env: { ...process.env, HOME: temp, XDG_CONFIG_HOME: path.join(temp, ".config"),
-      MATRIXMEDIA_DISABLE_TELEMETRY: "1", ELECTRON_RUN_AS_NODE: "" },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -56,9 +59,28 @@ async function main() {
     page = await target.page();
     page.on("pageerror", error => { output += "\n" + error.stack; });
     await page.setViewport({ width: 1400, height: 900 });
+    // 更新检查与菜单加载并行；按真实按钮关闭提示，避免遮罩吞掉菜单点击。
+    await page.evaluate(() => {
+      const dismissUpdate = () => {
+        const dialog = [...document.querySelectorAll(".el-dialog")].find(el =>
+          el.getClientRects().length && el.querySelector(".el-dialog__title")?.textContent === "发现新版本");
+        const skip = dialog && [...dialog.querySelectorAll("button")]
+          .find(el => el.textContent.trim() === "暂不更新");
+        if (skip) { observer.disconnect(); skip.click(); }
+      };
+      const observer = new MutationObserver(dismissUpdate);
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true,
+        attributeFilter: ["style", "class"] });
+      dismissUpdate();
+    });
     await page.waitForSelector(".el-menu");
     const historyMenu = await page.waitForXPath('//li[normalize-space(.)="视频管理"]');
     assert.ok(historyMenu, "应能从应用菜单进入视频管理");
+    // 关闭动画期间遮罩仍可拦截输入，等菜单真正接收点击后再继续。
+    await page.waitForFunction(el => {
+      const rect = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }, {}, historyMenu);
     await historyMenu.click();
     await page.waitForFunction(() => document.body.textContent.includes("等待状态测试"));
     const request = body => page.evaluate(async body => {
