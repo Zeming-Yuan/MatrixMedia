@@ -59,6 +59,7 @@ async function main() {
     page = await target.page();
     page.on("pageerror", error => { output += "\n" + error.stack; });
     await page.setViewport({ width: 1400, height: 900 });
+    await page.waitForSelector("body");
     // 更新检查与菜单加载并行；按真实按钮关闭提示，避免遮罩吞掉菜单点击。
     await page.evaluate(() => {
       const dismissUpdate = () => {
