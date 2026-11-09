@@ -1,6 +1,8 @@
 name: PR Check
 
 on:
+  workflow_call:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
@@ -8,43 +10,47 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.15.1"
+          node-version: "20.20.2"
       - name: Install dependencies
-        run: yarn
+        run: yarn install --frozen-lockfile
+      - name: Install isolated DOM test tools
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/matrixmedia-test-tools" --no-audit --no-fund --ignore-scripts playwright@1.62.1
+          echo "NODE_PATH=$RUNNER_TEMP/matrixmedia-test-tools/node_modules" >> "$GITHUB_ENV"
+          node "$RUNNER_TEMP/matrixmedia-test-tools/node_modules/playwright/cli.js" install --with-deps chromium
       # 部分被测模块引用 telemetrySecret.generated.js（gitignore 的本地生成物）
       - name: Generate telemetry secret
         run: node scripts/gen-telemetry-secret.js
-      - name: Run unit tests
+      - name: Build app and install MCP dependencies
         run: |
-          set -e
-          # 发布回执 / 退出码语义（含 #42 草稿校验）
-          yarn test:publish-abnormal
-          yarn test:publish-failure-queue
-          yarn test:publish-draft-args
-          yarn test:publish-article-args
-
-          # 内置 HTTP 服务的访问守卫（Origin 精确比对 + 写接口必须有守卫）
-          yarn test:server-request-guard
-          # 登记与历史
-          yarn test:pushdata-dedupe
-          yarn test:history-status
-          yarn test:history-args
-          yarn test:publish-history-csv
-          # 平台适配逻辑
-          yarn test:ks-description
-          yarn test:dy-description
-          yarn test:video-metadata-tags
-          yarn test:sph-video-product
-          yarn test:sph-video-drama
-          yarn test:sph-video-series
-          yarn test:sph-entity-options
-          # 截图与取消
-          yarn test:fail-screenshot
-          yarn test:fail-screenshot-timeout
-          yarn test:puppeteer-cancel
+          yarn build:dir
+          npm ci --prefix mcp --ignore-scripts
+      - name: Run Windows release gates
+        if: runner.os == 'Windows'
+        run: yarn test:release --with-gui
+      - name: Run Linux release gates
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a yarn test:release --with-gui
+      - name: Run native MCP tests
+        run: yarn --cwd mcp test
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gates-${{ runner.os }}
+          path: |
+            test/.cache/release/
+            test/.cache/waiting-confirmation/gui-result.json
+            test/.cache/waiting-confirmation/gui-waiting-confirmation.png

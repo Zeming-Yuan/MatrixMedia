@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.14.7-rc.1] - 2026-11-09
+
+### 修复
+- 等待平台确认时保留原任务、发表/草稿意图和消息，拒绝旧代次与迟到回执覆盖终态。
+- Windows MCP 启动时清除继承的 Electron Node 模式，开发模式优先使用真实可执行文件。
+- 校准分组、多代理和发布设置测试，并修复 Windows 路径与原生测试夹具兼容性。
+
+### 验证与构建
+- 增加 `yarn test:release --with-gui` 受控门禁，真实统计凭据探针单独列明。
+- PR 检查覆盖 Windows/Linux、真实 DOM、GUI 与 MCP；可手动构建候选产物。
+- 带预发布后缀的版本发布时标记为 prerelease；手动候选构建不发布 Release。
+
 ## [0.5.4] - 2026-05-06
 
 ### Added
