@@ -69,6 +69,6 @@ async function result(page, fn, arg) {
     results.push({ name: "dy-customer-disabled-span", ...disabled, clicks: disabledClicks });
     if (baseline) { assert.equal(disabled.value && disabled.value.ready, true); assert.equal(disabledClicks, 1); }
     else { assert.equal(disabled.value && disabled.value.ready, false); assert.equal(disabledClicks, 0); }
-    console.log(JSON.stringify({ baseline, sourceRoot, dySourceRoot, ksSourceRoot, node: process.version, chromium: browser.version(), results, blockedRequests: blockedRequests.length, note: "HTML-only regression; fixture CSS and state transitions are explicit, no real account acceptance; ks part deferred to #31." }, null, 2));
+    console.log(JSON.stringify({ baseline, sourceRoot, dySourceRoot, node: process.version, chromium: browser.version(), results, blockedRequests: blockedRequests.length, note: "HTML-only regression; fixture CSS and state transitions are explicit, no real account acceptance; ks part deferred to #31." }, null, 2));
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

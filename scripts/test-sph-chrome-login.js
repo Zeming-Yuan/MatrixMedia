@@ -4,6 +4,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const crypto = require("crypto");
 const { buildSync } = require("esbuild");
 
 const root = path.join(__dirname, "..");
@@ -36,8 +37,10 @@ const { createSphChromeLoginHandler } = service;
 const PARTITION = "persist:测试视频号";
 const ORIGIN = "https://channels.weixin.qq.com";
 const SECRET = "fixture-secret-not-for-logs";
+const PROFILE_ROOT = path.resolve("/fixture/app-data");
 
 function fixture(options = {}) {
+  const partition = options.partition || PARTITION;
   let tick = 0;
   const events = [];
   const imported = [];
@@ -97,11 +100,11 @@ function fixture(options = {}) {
   };
   const deps = {
     resolveChromePath: () => options.missingChrome ? null : "/fixture/chrome",
-    getProfileRoot: () => "/fixture/app-data",
+    getProfileRoot: () => PROFILE_ROOT,
     async launchBrowser(launch) { events.push(["launch", launch]); return browser; },
-    getTargetSession(partition) { assert.strictEqual(partition, PARTITION); return target; },
-    async probeImportedSession(partition) {
-      assert.strictEqual(partition, PARTITION);
+    getTargetSession(actualPartition) { assert.strictEqual(actualPartition, partition); return target; },
+    async probeImportedSession(actualPartition) {
+      assert.strictEqual(actualPartition, partition);
       assert.ok(events.some(e => e[0] === "flush-cookies"));
       events.push(["native-probe"]);
       if (options.requireSingleSession && Array.from(jar.values()).filter(c => c.name === "sessionid").length !== 1) return { ok: true, loggedIn: false };
@@ -129,8 +132,16 @@ function fixture(options = {}) {
   assert.strictEqual(f.events.at(-1)[0], "close");
   const launch = f.events.find(e => e[0] === "launch")[1];
   assert.strictEqual(launch.headless, false);
-  assert.ok(launch.userDataDir.startsWith("/fixture/app-data/chrome-sph-login/"));
-  assert.ok(!launch.userDataDir.includes("water-drop"), "凭据目录不得直接拼用户输入");
+  const profileRoot = path.join(PROFILE_ROOT, "chrome-sph-login");
+  const accountHash = crypto.createHash("sha256").update(PARTITION).digest("hex");
+  assert.strictEqual(path.dirname(launch.userDataDir), profileRoot);
+  assert.strictEqual(path.basename(launch.userDataDir), accountHash, "凭据目录必须散列账号 partition，不能直接拼用户输入");
+  const otherPartition = "persist:另一个账号视频号";
+  const otherAccount = fixture({ partition: otherPartition });
+  assert.strictEqual((await otherAccount.handler({ partition: otherPartition })).ok, true);
+  const otherProfile = otherAccount.events.find(e => e[0] === "launch")[1].userDataDir;
+  assert.strictEqual(path.dirname(otherProfile), profileRoot);
+  assert.notStrictEqual(otherProfile, launch.userDataDir, "不同账号必须隔离 Chrome profile");
   assert.ok(!JSON.stringify(r).includes(SECRET));
 
   // 仅出现 sessionid、但服务端拒绝鉴权时，不得导入或报告成功。
