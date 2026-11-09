@@ -21,7 +21,12 @@ export async function createCliFixture(dir, script, name = 'matrixmedia') {
   // Node normalizes its script argument to an absolute path before preloads run.
   // Restore the runner's relative entry token (cli or .) for the fixture body.
   await writeFile(preload, `
-if (require('node:path').resolve(process.execPath) === ${JSON.stringify(bin)}) {
+const executableKey = value => {
+  // Windows 临时目录可能使用 RUNNER~1 等 8.3 别名，先解析到实际文件路径。
+  const resolved = require('node:fs').realpathSync.native(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
+if (executableKey(process.execPath) === executableKey(${JSON.stringify(bin)})) {
   const result = require('node:child_process').spawnSync(${JSON.stringify(process.execPath)},
     [${JSON.stringify(body)}, require('node:path').relative(process.cwd(), process.argv[1]) || '.', ...process.argv.slice(2)], { stdio: 'inherit', env: process.env });
   process.exit(result.status ?? 1);

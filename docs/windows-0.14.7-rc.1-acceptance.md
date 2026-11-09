@@ -56,6 +56,8 @@ Windows Node 20 本机已完成 `yarn test:release --with-gui`，76/76 通过；
 
 GitHub Actions 首轮 `42589633854` 未通过：双平台定时测试基准依赖北京时间，Linux Electron 沙箱权限不满足要求，Windows GUI 截图异常覆盖了原始错误。已统一测试本地时间基准、配置 Linux 测试沙箱并保留 GUI 原始错误及启动日志。修正后的 CI 结果需以 PR 检查为准，不能用本机 76/76 替代。
 
-第二轮 `42592030253` 中 Linux 全部门禁通过；Windows 75/76，完整日志确认 GPU 子进程反复以 `-1073741819` 退出，最终 `GPU process isn't usable` 导致窗口关闭。Windows CI GUI 测试现显式设置 `MATRIXMEDIA_TEST_IN_PROCESS_GPU=1`，仅给测试 Electron 添加 `--in-process-gpu`；产品和本机默认验收均不依赖该参数。此参数是否解决虚拟环境故障需以随后 CI 结果为准。
+第二轮 `42592030253` 中 Linux 全部门禁通过；Windows 75/76，完整日志确认 GPU 子进程反复以 `-1073741819` 退出，最终 `GPU process isn't usable` 导致窗口关闭。Windows CI GUI 测试显式设置 `MATRIXMEDIA_TEST_IN_PROCESS_GPU=1`，仅给测试 Electron 添加 `--in-process-gpu`；产品和本机默认验收均不依赖该参数。第三轮 `42593293538` 两平台根包均为 76/76，Windows GUI 故障已消除，Linux MCP 也通过；Windows MCP 为 12/13，仅 PATH 自动发现用例失败。
+
+Windows Node 20 本机已复现夹具根因：同一程序通过大小写不同的 PATH 启动时，测试 preload 的大小写敏感路径比较失配，Node 误执行不存在的 `cli` 脚本。夹具现按实际文件路径归一后比较，Windows 再统一大小写，并在 PATH 用例中主动使用大写路径；生产 runner 未变。最终 Windows/Linux 全部门禁是否通过，以本 PR 当前提交检查为准。
 
 四项真实平台统计探针需要真实凭据，明确列为独立人工验收，未计入 76 项通过。未验证其他发布平台、macOS 实机、历史版本升级及正式签名；本记录不代表全平台正式发布验收。

@@ -111,14 +111,16 @@ process.exit(4);
 
 test('PATH installation takes precedence over a dev checkout and clears Node mode', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mm path spaces '));
+  // Windows 的 where / 启动路径可能改变大小写，夹具仍应识别同一可执行文件。
+  const searchDir = process.platform === 'win32' ? dir.toUpperCase() : dir;
   const { env } = await createCliFixture(dir, `
 console.log(JSON.stringify({ args: process.argv.slice(2), nodeMode: Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE') }));
 `);
   try {
     await withEnv({ ...env, MATRIXMEDIA_BIN: undefined, MATRIXMEDIA_DIR: dir,
-      PATH: `${dir}${path.delimiter}${process.env.PATH || ''}`, ELECTRON_RUN_AS_NODE: '1' }, async () => {
+      PATH: `${searchDir}${path.delimiter}${process.env.PATH || ''}`, ELECTRON_RUN_AS_NODE: '1' }, async () => {
       const result = await runCli(['history', '--json']);
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 0, result.stderr);
       assert.deepEqual(result.lastJson, { args: ['cli', 'history', '--json'], nodeMode: false });
     });
   } finally {
