@@ -45,6 +45,8 @@ jobs:
           npm ci --prefix mcp --ignore-scripts
       - name: Run Windows release gates
         if: runner.os == 'Windows'
+        env:
+          MATRIXMEDIA_TEST_IN_PROCESS_GPU: "1"
         run: yarn test:release --with-gui
       - name: Run Linux release gates
         if: runner.os == 'Linux'

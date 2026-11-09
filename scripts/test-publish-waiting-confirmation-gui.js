@@ -48,7 +48,12 @@ async function main() {
       recordOutput(`\n[diagnostic ${label}] ${error.stack || error}\n`);
     }
   };
-  const child = spawn(require("electron"), [wrapper, "--disable-gpu"], {
+  const args = [wrapper, "--disable-gpu"];
+  // Windows CI 虚拟显卡的 GPU 子进程会崩溃；仅在显式指定的测试环境中使用进程内渲染。
+  if (process.platform === "win32" && process.env.MATRIXMEDIA_TEST_IN_PROCESS_GPU === "1") {
+    args.push("--in-process-gpu");
+  }
+  const child = spawn(require("electron"), args, {
     cwd: root,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
