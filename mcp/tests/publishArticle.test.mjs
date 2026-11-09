@@ -1,25 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createCliFixture, withEnv, removeCliFixture } from './fixtures.mjs';
 
 import { handlePublishArticle } from '../dist/tools/publishArticle.js';
 
 async function withFakeMatrixmedia(script, fn) {
   const dir = await mkdtemp(path.join(tmpdir(), 'matrixmedia-mcp-test-'));
-  const bin = path.join(dir, 'matrixmedia');
-  const originalPath = process.env.PATH;
-
-  await writeFile(bin, script, 'utf8');
-  await chmod(bin, 0o755);
-  process.env.PATH = `${dir}${path.delimiter}${originalPath || ''}`;
-
+  const { bin, env } = await createCliFixture(dir, script);
   try {
-    return await fn();
+    return await withEnv({ ...env, MATRIXMEDIA_BIN: bin }, fn);
   } finally {
-    process.env.PATH = originalPath;
-    await rm(dir, { recursive: true, force: true });
+    await removeCliFixture(dir);
   }
 }
 

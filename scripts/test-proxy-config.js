@@ -78,7 +78,7 @@ const {
 (() => {
   const disabled = normalizeAccountProxy({ enabled: false, url: "" });
   assert.strictEqual(disabled.ok, true);
-  assert.strictEqual(disabled.value.enabled, false);
+  assert.deepStrictEqual(disabled.value, { proxies: [] });
 })();
 
 (() => {
@@ -92,7 +92,26 @@ const {
     url: "http://127.0.0.1:7890",
   });
   assert.strictEqual(enabled.ok, true);
-  assert.strictEqual(enabled.value.url, "http://127.0.0.1:7890");
+  assert.deepStrictEqual(enabled.value, {
+    proxies: [{ enabled: true, url: "http://127.0.0.1:7890" }],
+  });
+})();
+
+(() => {
+  const proxies = [
+    { enabled: false, url: "http://disabled.example:8080" },
+    { enabled: true, url: "http://127.0.0.1:7890" },
+    { enabled: true, url: "socks5://127.0.0.1:1080" },
+  ];
+  assert.deepStrictEqual(normalizeAccountProxy({ proxies }), {
+    ok: true, value: { proxies },
+  });
+  assert.strictEqual(isAccountProxyEnabled({ proxies }), true);
+  assert.strictEqual(getAccountProxyDisplay({ proxies }), "127.0.0.1:7890 等 2 个");
+  assert.deepStrictEqual(normalizeAccountProxy(proxies[0]), {
+    ok: true, value: { proxies: [proxies[0]] },
+  });
+  assert.strictEqual(normalizeAccountProxy({ proxies: [{ enabled: true, url: "" }] }).ok, false);
 })();
 
 (() => {

@@ -1,46 +1,27 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { handlePublishVideo } from '../dist/tools/publish.js';
 import { handleListAccounts } from '../dist/tools/accounts.js';
-import { defaultInstallLocations } from '../dist/runner.js';
+import { createCliFixture, withEnv, removeCliFixture } from './fixtures.mjs';
+import { runCli, resolveMatrixmediaCommand, defaultInstallLocations } from '../dist/runner.js';
 import { existsSync } from 'node:fs';
-
-async function withEnv(vars, fn) {
-  const saved = {};
-  for (const k of Object.keys(vars)) {
-    saved[k] = process.env[k];
-    if (vars[k] === undefined) delete process.env[k];
-    else process.env[k] = vars[k];
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const k of Object.keys(saved)) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  }
-}
 
 test('MATRIXMEDIA_BIN is used and publish_video forwards --phone for xhs', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mm-bin-'));
-  const bin = path.join(dir, 'fake-matrixmedia');
   const argsLog = path.join(dir, 'args.json');
-  await writeFile(
-    bin,
+  const { bin, env } = await createCliFixture(
+    dir,
     `#!/usr/bin/env node
 require('fs').writeFileSync(${JSON.stringify(argsLog)}, JSON.stringify(process.argv.slice(2)));
 console.log(JSON.stringify({ resultStatus: 'success', message: 'ok' }));
-`,
-    'utf8'
+`
   );
-  await chmod(bin, 0o755);
   try {
-    await withEnv({ MATRIXMEDIA_BIN: bin }, async () => {
+    await withEnv({ ...env, MATRIXMEDIA_BIN: bin }, async () => {
       const out = JSON.parse(
         await handlePublishVideo({
           platform: 'xhs',
@@ -57,7 +38,7 @@ console.log(JSON.stringify({ resultStatus: 'success', message: 'ok' }));
       assert.ok(!argv.includes('--partition'));
     });
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeCliFixture(dir);
   }
 });
 
@@ -70,16 +51,79 @@ test('publish_video rejects unknown platform', async () => {
 
 const appInstalledHere = defaultInstallLocations().some(p => existsSync(p));
 
-test('missing app yields an actionable install hint', { skip: appInstalledHere && 'MatrixMedia installed at a default location on this machine' }, async () => {
+test('missing app yields an actionable install hint', { skip: appInstalledHere && process.platform !== 'win32' && 'MatrixMedia installed at a default location on this machine' }, async () => {
   const empty = await mkdtemp(path.join(tmpdir(), 'mm-empty-'));
   try {
     await withEnv(
-      { MATRIXMEDIA_BIN: undefined, MATRIXMEDIA_DIR: empty, PATH: empty, HOME: empty },
+      { MATRIXMEDIA_BIN: undefined, MATRIXMEDIA_DIR: empty, PATH: empty, HOME: empty,
+        LOCALAPPDATA: empty, ProgramFiles: empty, 'ProgramFiles(x86)': empty },
       async () => {
         await assert.rejects(handleListAccounts({}), /未找到 MatrixMedia/);
       }
     );
   } finally {
-    await rm(empty, { recursive: true, force: true });
+    await removeCliFixture(empty);
+  }
+});
+
+// A leaked Electron Node-mode flag must never reach the application executable.
+test('explicit executable receives intact arguments and no inherited Electron Node flag', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'mm runner spaces '));
+  const { bin, env } = await createCliFixture(dir, `
+console.log(JSON.stringify({ args: process.argv.slice(2), nodeMode: Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE') }));
+process.exit(3);
+`);
+  try {
+    await withEnv({ ...env, MATRIXMEDIA_BIN: bin, ELECTRON_RUN_AS_NODE: '1' }, async () => {
+      const result = await runCli(['accounts', '--title', 'space & literal value']);
+      assert.equal(result.exitCode, 3);
+      assert.deepEqual(result.lastJson, { args: ['cli', 'accounts', '--title', 'space & literal value'], nodeMode: false });
+      assert.equal(process.env.ELECTRON_RUN_AS_NODE, '1', 'caller environment is preserved');
+    });
+  } finally {
+    await removeCliFixture(dir);
+  }
+});
+
+test('dev checkout uses the Electron executable and clears inherited Node mode', { skip: appInstalledHere && process.platform !== 'win32' && 'Default installation takes precedence over dev checkout' }, async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'mm dev spaces '));
+  const electronDir = path.join(dir, 'node_modules', 'electron');
+  const dist = path.join(electronDir, 'dist');
+  await mkdir(dist, { recursive: true });
+  const { bin, env } = await createCliFixture(dist, `
+console.log(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), nodeMode: Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE') }));
+process.exit(4);
+`, 'electron');
+  await writeFile(path.join(electronDir, 'path.txt'), path.basename(bin));
+  try {
+    await withEnv({ ...env, MATRIXMEDIA_BIN: undefined, MATRIXMEDIA_DIR: dir, PATH: '', ELECTRON_RUN_AS_NODE: '1',
+      LOCALAPPDATA: dir, ProgramFiles: dir, 'ProgramFiles(x86)': dir }, async () => {
+      const resolved = resolveMatrixmediaCommand();
+      assert.equal(resolved?.command, bin);
+      const result = await runCli(['history', '--json']);
+      assert.equal(result.exitCode, 4);
+      assert.deepEqual(result.lastJson, { args: ['.', 'cli', 'history', '--json'], cwd: dir, nodeMode: false });
+    });
+  } finally {
+    await removeCliFixture(dir);
+  }
+});
+
+test('PATH installation takes precedence over a dev checkout and clears Node mode', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'mm path spaces '));
+  // Windows 的 where / 启动路径可能改变大小写，夹具仍应识别同一可执行文件。
+  const searchDir = process.platform === 'win32' ? dir.toUpperCase() : dir;
+  const { env } = await createCliFixture(dir, `
+console.log(JSON.stringify({ args: process.argv.slice(2), nodeMode: Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE') }));
+`);
+  try {
+    await withEnv({ ...env, MATRIXMEDIA_BIN: undefined, MATRIXMEDIA_DIR: dir,
+      PATH: `${searchDir}${path.delimiter}${process.env.PATH || ''}`, ELECTRON_RUN_AS_NODE: '1' }, async () => {
+      const result = await runCli(['history', '--json']);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(result.lastJson, { args: ['cli', 'history', '--json'], nodeMode: false });
+    });
+  } finally {
+    await removeCliFixture(dir);
   }
 });

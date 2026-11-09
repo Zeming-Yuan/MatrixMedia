@@ -34,30 +34,52 @@ async function main() {
   const childEnv = { ...process.env, HOME: temp, XDG_CONFIG_HOME: path.join(temp, ".config"),
     MATRIXMEDIA_DISABLE_TELEMETRY: "1" };
   delete childEnv.ELECTRON_RUN_AS_NODE;
-  const child = spawn(require("electron"), [wrapper, "--disable-gpu"], {
+  const startupLog = path.join(cache, "gui-startup.log");
+  fs.writeFileSync(startupLog, "");
+  let output = "";
+  const recordOutput = text => {
+    output += text;
+    fs.appendFileSync(startupLog, text);
+  };
+  const bestEffort = async (label, action) => {
+    try {
+      await action();
+    } catch (error) {
+      recordOutput(`\n[diagnostic ${label}] ${error.stack || error}\n`);
+    }
+  };
+  const args = [wrapper, "--disable-gpu"];
+  // Windows CI 虚拟显卡的 GPU 子进程会崩溃；仅在显式指定的测试环境中使用进程内渲染。
+  if (process.platform === "win32" && process.env.MATRIXMEDIA_TEST_IN_PROCESS_GPU === "1") {
+    args.push("--in-process-gpu");
+  }
+  const child = spawn(require("electron"), args, {
     cwd: root,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let output = "";
+  const childClosed = new Promise(resolve => child.once("close", resolve));
+  child.stdout.on("data", chunk => recordOutput(chunk.toString()));
+  child.stderr.on("data", chunk => recordOutput(chunk.toString()));
+  child.once("exit", (code, signal) => recordOutput(`\n[child exit] code=${code} signal=${signal}\n`));
   let browser;
   let page;
   try {
     const endpoint = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Electron CDP 启动超时: " + output.slice(-1200))), 25000);
-      const collect = chunk => {
-        output += chunk.toString();
+      const collect = () => {
         const match = output.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+/);
         if (match) { clearTimeout(timer); resolve(match[0]); }
       };
       child.stdout.on("data", collect);
       child.stderr.on("data", collect);
-      child.once("exit", code => { clearTimeout(timer); reject(new Error("Electron 提前退出 " + code + ": " + output.slice(-1200))); });
+      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error("Electron 提前退出 code=" + code + " signal=" + signal + ": " + output.slice(-1200))); });
+      child.once("error", error => { clearTimeout(timer); recordOutput(`\n[child error] ${error.stack || error}\n`); reject(error); });
     });
     browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
     const target = await browser.waitForTarget(t => t.url().includes("/dist/electron/index.html"), { timeout: 25000 });
     page = await target.page();
-    page.on("pageerror", error => { output += "\n" + error.stack; });
+    page.on("pageerror", error => recordOutput("\n" + error.stack));
     await page.setViewport({ width: 1400, height: 900 });
     await page.waitForSelector("body");
     // 更新检查与菜单加载并行；按真实按钮关闭提示，避免遮罩吞掉菜单点击。
@@ -104,9 +126,10 @@ async function main() {
     await emit("puppeteerFile-progress", { phase: "waiting_confirmation", message: "请扫码确认" });
     try {
       await hasStatus("等待确认");
-    } catch (_) {
-      await page.screenshot({ path: path.join(cache, "gui-red.png"), fullPage: true });
-      assert.fail("收到等待确认进度后 GUI 必须显示等待确认");
+    } catch (error) {
+      await bestEffort("red screenshot", () => page.screenshot({ path: path.join(cache, "gui-red.png"), fullPage: true }));
+      recordOutput("\n[assertion] 收到等待确认进度后 GUI 必须显示等待确认\n");
+      throw error;
     }
     await emit("puppeteerFile-progress", { phase: "verifying" });
     await hasStatus("发布中");
@@ -146,19 +169,21 @@ async function main() {
       successCount: items[0].publishSuccessCount, failCount: items[0].publishFailCount, records: items.length, concurrentTerminalProtected: true }));
     console.log("GUI waiting_confirmation / zero success / one record: passed");
   } catch (error) {
-    if (page && !page.isClosed()) {
-      await page.screenshot({ path: path.join(cache, "gui-error.png"), fullPage: true });
-      fs.writeFileSync(path.join(cache, "gui-page.txt"), await page.evaluate(() => document.body.innerText));
+    recordOutput(`\n[test error] ${error.stack || error}\n`);
+    if (page) {
+      await bestEffort("error screenshot", () => page.screenshot({ path: path.join(cache, "gui-error.png"), fullPage: true }));
+      await bestEffort("page text", async () => {
+        fs.writeFileSync(path.join(cache, "gui-page.txt"), await page.evaluate(() => document.body.innerText));
+      });
     }
-    fs.writeFileSync(path.join(cache, "gui-startup.log"), output);
     throw error;
   } finally {
-    if (browser) await browser.disconnect();
+    if (browser) await bestEffort("browser disconnect", () => browser.disconnect());
     child.kill("SIGTERM");
     const forceExit = setTimeout(() => child.kill("SIGKILL"), 2000);
-    await new Promise(resolve => child.exitCode !== null || child.signalCode !== null ? resolve() : child.once("exit", resolve));
+    await childClosed;
     clearTimeout(forceExit);
-    fs.rmSync(temp, { recursive: true, force: true });
+    await bestEffort("temporary files", () => fs.rmSync(temp, { recursive: true, force: true }));
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

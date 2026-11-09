@@ -1,11 +1,12 @@
 {
   "name": "matrix-video",
-  "version": "0.14.6",
+  "version": "0.14.7-rc.1",
   "author": "lhl",
   "description": "自媒体免费开源矩阵工具",
   "license": "GPL-2.0-only",
   "main": "./dist/electron/main.js",
   "scripts": {
+    "test:release": "node scripts/verify-release.js",
     "pack:workbuddy": "node scripts/pack-workbuddy.js",
     "dev": "cross-env TERGET_ENV=development node .electron-vue/dev-runner.js",
     "predev": "node scripts/gen-telemetry-secret.js",

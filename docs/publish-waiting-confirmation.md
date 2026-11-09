@@ -1,5 +1,7 @@
 # 等待平台确认的原任务语义
 
+最新候选包状态见 [Windows 0.14.7-rc.1 验收](./windows-0.14.7-rc.1-acceptance.md)：已补齐原生 MCP、默认隐藏模式、安装版 CLI 草稿及 GUI 导航证据。下文保留早期各轮限制与失败记录；最新 CI 与未覆盖范围以候选包记录及 PR 检查为准。
+
 ## 本次修复范围
 
 修复原未提交回归测试暴露的链路缺口：收到平台扫码/安全确认进度后仍显示发布中；定时任务把等待或草稿当作发表成功；历史查询用旧成功计数覆盖等待状态；CSV 不认识等待确认。沿用 `needs_attention` / 退出码 4，增加其原始 `waiting_confirmation` 原因，不增加平台上传器或公众号发布能力。
@@ -110,4 +112,4 @@ node --require D:\DevTools\Apps\MatrixMediaRuntime\electron-direct-launch.cjs e2
 
 `--yes` 未进行后台人工核对；通过依据为平台保存后的跳转与回执字段。回执 message 仍沿用“网页端无草稿箱，无法核验”的旧文案，本次没有改写。早一轮隐藏窗口 run `20261109-073818` 为 `NEEDS_ATTENTION`、CLI 退出 4、`outcome=draft_unverified`、`draftUrlUnchanged=true`，该失败记录仍保留，隐藏模式尚未确认。账号、Cookie、原始平台截图与素材均留在 Windows 本机，没有提交。
 
-Windows GUI 和显示窗口模式的真实草稿证据已补齐，可将 PR 转为可审查状态。审查范围仍需保留隐藏模式、已安装打包产物和完整仓库门禁的上述限制。真实平台测试产生的 `MM-E2E` 草稿请在核对后清理。
+本节记录的是 PR #3 合并时的验证边界。后续候选版已补验隐藏模式、已安装打包产物和原生 MCP，详见文首链接；完整 CI 通过前，候选版 PR #4 继续保持 Draft。真实平台测试产生的 `MM-E2E` 草稿请在核对后清理。

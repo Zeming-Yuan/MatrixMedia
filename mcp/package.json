@@ -34,7 +34,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
