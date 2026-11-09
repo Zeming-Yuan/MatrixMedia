@@ -15,6 +15,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      npm_config_registry: https://registry.npmjs.org
     steps:
       - uses: actions/checkout@v4
       - name: Set up Node.js
@@ -32,6 +34,11 @@ jobs:
       # 部分被测模块引用 telemetrySecret.generated.js（gitignore 的本地生成物）
       - name: Generate telemetry secret
         run: node scripts/gen-telemetry-secret.js
+      - name: Configure Linux Electron sandbox
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Build app and install MCP dependencies
         run: |
           yarn build:dir
@@ -52,5 +59,4 @@ jobs:
           name: release-gates-${{ runner.os }}
           path: |
             test/.cache/release/
-            test/.cache/waiting-confirmation/gui-result.json
-            test/.cache/waiting-confirmation/gui-waiting-confirmation.png
+            test/.cache/waiting-confirmation/gui-*
