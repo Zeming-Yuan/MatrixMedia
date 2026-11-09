@@ -106,6 +106,10 @@ function inferRepoRoot(): string | null {
  */
 export function resolveMatrixmediaCommand(): ResolvedCommand | null {
   const env: NodeJS.ProcessEnv = { ...process.env };
+  // Windows 上 Electron 按变量是否存在判断模式，空字符串也必须删除。
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
+  }
 
   const explicit = process.env.MATRIXMEDIA_BIN;
   if (explicit && fs.existsSync(explicit)) {
@@ -124,14 +128,22 @@ export function resolveMatrixmediaCommand(): ResolvedCommand | null {
 
   const dir = process.env.MATRIXMEDIA_DIR ?? inferRepoRoot();
   if (dir) {
-    const electronBin = path.join(
+    const electronDir = path.join(dir, 'node_modules', 'electron');
+    let electronExecutable: string | undefined;
+    try {
+      const executableName = fs.readFileSync(path.join(electronDir, 'path.txt'), 'utf8').trim();
+      const candidate = path.join(electronDir, 'dist', executableName);
+      if (executableName && fs.existsSync(candidate)) electronExecutable = candidate;
+    } catch {
+      // 兼容仅保留包管理器启动器的旧版或自定义开发目录。
+    }
+    const electronBin = electronExecutable ?? path.join(
       dir,
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'electron.cmd' : 'electron'
     );
     if (fs.existsSync(electronBin)) {
-      env.ELECTRON_RUN_AS_NODE = '';
       return {
         command: electronBin,
         prefixArgs: ['.', 'cli'],

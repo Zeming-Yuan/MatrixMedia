@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, chmod, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createCliFixture, removeCliFixture } from './fixtures.mjs';
 import { fileURLToPath } from 'node:url';
 
 const serverEntry = path.resolve(fileURLToPath(import.meta.url), '..', '..', 'dist', 'index.js');
@@ -14,6 +15,7 @@ function startServer(env) {
     env: { ...process.env, ...env },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
+  const closed = new Promise(resolve => child.once('close', resolve));
   const pending = new Map();
   let buf = '';
   let nextId = 1;
@@ -53,15 +55,17 @@ function startServer(env) {
     },
     request,
     call,
-    close: () => child.kill(),
+    async close() {
+      child.kill();
+      await closed;
+    },
   };
 }
 
 async function fakeBin(dir, { sleepMs, exitCode = 0, stdout }) {
-  const bin = path.join(dir, 'fake-matrixmedia');
   const counter = path.join(dir, 'count.txt');
-  await writeFile(
-    bin,
+  const { bin, env } = await createCliFixture(
+    dir,
     `#!/usr/bin/env node
 const fs = require('fs');
 const c = ${JSON.stringify(counter)};
@@ -70,22 +74,20 @@ setTimeout(() => {
   ${stdout ? `console.log(${JSON.stringify(JSON.stringify(stdout))});` : ''}
   process.exit(${exitCode});
 }, ${sleepMs});
-`,
-    'utf8'
+`
   );
-  await chmod(bin, 0o755);
-  return { bin, counter };
+  return { bin, counter, env };
 }
 
 const videoArgs = { platform: 'dy', phone: '13800138000', file: '/tmp/v.mp4', title: 'jobs' };
 
 test('slow publish returns a jobId, dedupes retries, and resolves via get_publish_status', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mm-jobs-'));
-  const { bin, counter } = await fakeBin(dir, {
+  const { bin, counter, env } = await fakeBin(dir, {
     sleepMs: 1500,
     stdout: { resultStatus: 'success', message: '上传成功' },
   });
-  const srv = startServer({ MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '200' });
+  const srv = startServer({ ...env, MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '200' });
   try {
     await srv.init();
 
@@ -108,34 +110,34 @@ test('slow publish returns a jobId, dedupes retries, and resolves via get_publis
     assert.equal(done.message, '上传成功');
     assert.equal(await readFile(counter, 'utf8'), '1', 'CLI must run only once');
   } finally {
-    srv.close();
-    await rm(dir, { recursive: true, force: true });
+    await srv.close();
+    await removeCliFixture(dir);
   }
 });
 
 test('fast publish failure is still reported inline as an error', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mm-jobs-'));
-  const { bin } = await fakeBin(dir, {
+  const { bin, env } = await fakeBin(dir, {
     sleepMs: 10,
     exitCode: 3,
     stdout: { message: '账号未登录' },
   });
-  const srv = startServer({ MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '5000' });
+  const srv = startServer({ ...env, MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '5000' });
   try {
     await srv.init();
     const res = await srv.call('publish_video', videoArgs);
     assert.equal(res.isError, true);
     assert.match(res.body, /账号未登录/);
   } finally {
-    srv.close();
-    await rm(dir, { recursive: true, force: true });
+    await srv.close();
+    await removeCliFixture(dir);
   }
 });
 
 test('background failure surfaces through get_publish_status', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mm-jobs-'));
-  const { bin } = await fakeBin(dir, { sleepMs: 800, exitCode: 3, stdout: { message: '上传失败' } });
-  const srv = startServer({ MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '100' });
+  const { bin, env } = await fakeBin(dir, { sleepMs: 800, exitCode: 3, stdout: { message: '上传失败' } });
+  const srv = startServer({ ...env, MATRIXMEDIA_BIN: bin, MATRIXMEDIA_INLINE_WAIT_MS: '100' });
   try {
     await srv.init();
     const started = JSON.parse((await srv.call('publish_video', videoArgs)).body);
@@ -146,8 +148,8 @@ test('background failure surfaces through get_publish_status', async () => {
     assert.equal(st.status, 'failed');
     assert.match(st.error, /上传失败/);
   } finally {
-    srv.close();
-    await rm(dir, { recursive: true, force: true });
+    await srv.close();
+    await removeCliFixture(dir);
   }
 });
 
@@ -159,6 +161,6 @@ test('unknown jobId points the agent at list_history instead of republishing', a
     assert.equal(res.isError, true);
     assert.match(res.body, /list_history/);
   } finally {
-    srv.close();
+    await srv.close();
   }
 });
