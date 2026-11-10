@@ -27,6 +27,7 @@
 
 ## 工具使用文档
 
+- [视频分发操作指南](./docs/video-distribution-guide.md)：安装、账号登录、单视频与多账号分发、目录批量发布、定时任务和结果核对。
 - 国内文档：[Gitee Wiki](https://gitee.com/gzlingyi_0/pubtw/wikis/pages?sort_id=14772656&doc_id=7335804)
 - 官网文档：[hanliang97.github.io/MatrixMedia](https://hanliang97.github.io/MatrixMedia/)
 
